@@ -174,3 +174,20 @@ int main(int argc, char *argv[]) {
     free(buff);
     exit(0);
 }
+
+//TODO:  #7  Notice all of the helper functions provided in the
+//          starter take both the buffer as well as the length.  Why
+//          do you think providing both the pointer and the length
+//          is a good practice, after all we know from main() that
+//          the buff variable will have exactly 50 bytes?
+//
+//          Utilizing the same buffer length and pointer to the buffer
+//          is ideal for creating uniformity throughout the code. If such 
+//          practices were avoided there would be confusion in the memory
+//          allocated, the main buffer (considering one may attempt to create
+//          multiple), as well as the exact data being manipulated. In the case 
+//          of the print buff function, having access to the buff pointer and 
+//          the size makes it easy to call the function as needed, especially
+//          after the other helper function manipulate the contents within the 
+//          buff as needed.
+
