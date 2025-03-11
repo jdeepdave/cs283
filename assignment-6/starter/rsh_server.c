@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/un.h>
@@ -17,6 +18,30 @@
 #include "dshlib.h"
 #include "rshlib.h"
 
+int build_cmd_list(char *cmd_line, command_list_t *clist) {
+    memset(clist, 0, sizeof(command_list_t));
+
+    char *token;
+    int count = 0;
+    int cmd_index = 0;
+
+    token = strtok(cmd_line, " ");
+    while (token != NULL && count < CMD_MAX) {
+        if (strcmp(token, "|") == 0) {
+            clist->commands[cmd_index].argv[count] = NULL;  // Terminate args for previous command
+            cmd_index++;  // Move to next command
+            count = 0;    // Reset argument counter
+        } else {
+            clist->commands[cmd_index].argv[count++] = token;
+        }
+        token = strtok(NULL, " ");
+    }
+
+    clist->commands[cmd_index].argv[count] = NULL;  // Null-terminate last command
+    clist->num = cmd_index + 1;  // Set total number of commands
+
+    return (clist->num > 0) ? OK : WARN_NO_CMDS;
+}
 
 /*
  * start_server(ifaces, port, is_threaded)
@@ -263,7 +288,7 @@ int exec_client_requests(int cli_socket) {
             break;
         }
 
-        io_buff[recv_bytes - 1] = '\0';
+        io_buff[recv_bytes - 1] = '\0'; // Null-terminate received command
 
         if (strcmp(io_buff, "exit") == 0) {
             break;
@@ -273,9 +298,15 @@ int exec_client_requests(int cli_socket) {
             return OK_EXIT;
         }
 
-        send_message_string(cli_socket, "Executing command...\n");
-        rsh_execute_pipeline(cli_socket, io_buff);
-        send_message_eof(cli_socket);
+        command_list_t cmd_list;
+        if (build_cmd_list(io_buff, &cmd_list) == OK) {
+            rsh_execute_pipeline(cli_socket, &cmd_list);
+        } else {
+            send_message_string(cli_socket, "Invalid command.\n");
+        }
+
+
+        send_message_eof(cli_socket); // ✅ Ensure only one EOF is sent per command
     }
 
     free(io_buff);
@@ -373,46 +404,69 @@ int send_message_string(int cli_socket, char *buff) {
  *                  get this value. 
  */
 
-int rsh_execute_pipeline(int cli_sock, char *cmd) {
-    int pipes[2];
-    pid_t pid;
-    int status;
-
-    if (pipe(pipes) < 0) {
-        perror("pipe failed");
+int rsh_execute_pipeline(int cli_sock, command_list_t *clist) {
+    if (clist->num < 1) {
+        send_message_string(cli_sock, "Error: No command received\n");
+        send_message_eof(cli_sock);
         return ERR_RDSH_CMD_EXEC;
     }
 
-    pid = fork();
-    if (pid < 0) {
-        perror("fork failed");
-        return ERR_RDSH_CMD_EXEC;
+    int pipes[clist->num - 1][2];  
+    pid_t pids[clist->num];
+
+    // ✅ Create pipes
+    for (int i = 0; i < clist->num - 1; i++) {
+        if (pipe(pipes[i]) == -1) {
+            perror("pipe failed");
+            return ERR_RDSH_CMD_EXEC;
+        }
     }
 
-    if (pid == 0) {
-        close(pipes[0]);
-        dup2(pipes[1], STDOUT_FILENO);
-        dup2(pipes[1], STDERR_FILENO);
-        close(pipes[1]);
-
-        execlp("/bin/sh", "sh", "-c", cmd, (char *)NULL);
-        perror("exec failed");
-        exit(EXIT_FAILURE);
-    } else {
-        close(pipes[1]);
-        char buffer[RDSH_COMM_BUFF_SZ];
-        ssize_t bytes_read;
-
-        while ((bytes_read = read(pipes[0], buffer, sizeof(buffer) - 1)) > 0) {
-            buffer[bytes_read] = '\0';
-            send(cli_sock, buffer, bytes_read, 0);
+    for (int i = 0; i < clist->num; i++) {
+        pids[i] = fork();
+        if (pids[i] < 0) {
+            perror("fork failed");
+            return ERR_RDSH_CMD_EXEC;
         }
 
-        close(pipes[0]);
-        waitpid(pid, &status, 0);
+        if (pids[i] == 0) {  // Child process
+            if (i > 0) {
+                dup2(pipes[i - 1][0], STDIN_FILENO);
+            }
+
+            if (i < clist->num - 1) {
+                dup2(pipes[i][1], STDOUT_FILENO);
+            } else {
+                dup2(cli_sock, STDOUT_FILENO);
+                dup2(cli_sock, STDERR_FILENO);
+            }
+
+            for (int j = 0; j < clist->num - 1; j++) {
+                close(pipes[j][0]);
+                close(pipes[j][1]);
+            }
+
+            execvp(clist->commands[i].argv[0], clist->commands[i].argv);
+            perror("exec failed");
+            exit(EXIT_FAILURE);
+        }
     }
 
-    return WEXITSTATUS(status);
+    for (int i = 0; i < clist->num - 1; i++) {
+        close(pipes[i][0]);
+        close(pipes[i][1]);
+    }
+
+    for (int i = 0; i < clist->num; i++) {
+        waitpid(pids[i], NULL, 0);
+    }
+
+    fsync(cli_sock);
+    fflush(stdout);
+    usleep(500);
+
+    send_message_eof(cli_sock);
+    return OK;
 }
 
 /**************   OPTIONAL STUFF  ***************/

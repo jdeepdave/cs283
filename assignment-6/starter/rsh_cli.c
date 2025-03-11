@@ -105,9 +105,11 @@ int exec_remote_cmd_loop(char *address, int port) {
     if (cli_socket < 0) {
         return client_cleanup(cli_socket, cmd_buff, rsp_buff, ERR_RDSH_CLIENT);
     }
-
     while (1) {
-        printf("%s", SH_PROMPT);
+	memset(cmd_buff, 0, RDSH_COMM_BUFF_SZ);
+        printf("dsh4> ");
+        fflush(stdout);
+
         if (fgets(cmd_buff, RDSH_COMM_BUFF_SZ, stdin) == NULL) {
             printf("\n");
             break;
@@ -120,21 +122,29 @@ int exec_remote_cmd_loop(char *address, int port) {
             break;
         }
 
-        while ((recv_bytes = recv(cli_socket, rsp_buff, RDSH_COMM_BUFF_SZ, 0)) > 0) {
+        memset(rsp_buff, 0, RDSH_COMM_BUFF_SZ);
+
+	while ((recv_bytes = recv(cli_socket, rsp_buff, RDSH_COMM_BUFF_SZ, 0)) > 0) {
+            fflush(stdout);
+
             is_eof = (rsp_buff[recv_bytes - 1] == RDSH_EOF_CHAR);
             if (is_eof) {
                 rsp_buff[recv_bytes - 1] = '\0';
             }
+
             printf("%.*s", (int)recv_bytes, rsp_buff);
+            fflush(stdout);
+
+            if (!is_eof && recv_bytes < RDSH_COMM_BUFF_SZ - 1) {
+            }	
+
             if (is_eof) break;
-        }
+       }
+       
 
-        if (strcmp(cmd_buff, "exit") == 0 || strcmp(cmd_buff, "stop-server") == 0) {
-            break;
-        }
     }
-
     return client_cleanup(cli_socket, cmd_buff, rsp_buff, OK);
+    
 }
 
 /*

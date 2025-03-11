@@ -3,6 +3,12 @@
 
 #include "dshlib.h"
 
+#define BI_CMD_UNKNOWN -1
+#define BI_CMD_EXIT 0
+#define BI_CMD_CD 1
+#define BI_CMD_STOP_SVR 2 
+#define BI_CMD_RC 3
+
 //common remote shell client and server constants and definitions
 
 
@@ -66,6 +72,7 @@ int send_message_string(int cli_socket, char *buff);
 int process_cli_requests(int svr_socket);
 int exec_client_requests(int cli_socket);
 int rsh_execute_pipeline(int socket_fd, command_list_t *clist);
+int build_cmd_list(char *cmd_line, command_list_t *clist);
 
 Built_In_Cmds rsh_match_command(const char *input);
 Built_In_Cmds rsh_built_in_cmd(cmd_buff_t *cmd);
